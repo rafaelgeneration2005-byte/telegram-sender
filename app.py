@@ -21,7 +21,6 @@ if "loop" not in st.session_state:
 loop = st.session_state.loop
 
 # ---------------- USERS (read from users.json) ----------------
-# Format of users.json documented below
 USERS_FILE = "users.json"
 
 def load_users():
@@ -41,12 +40,12 @@ client = st.session_state.client
 
 # ---------------- SESSION defaults ----------------
 defaults = {
-    "stage": "login",   # login -> phone -> code -> need_2fa -> logged
+    "stage": "login",
     "user_id": None,
     "attempts": 0,
-    "attempts_display": "",  # text overwritten
+    "attempts_display": "",
 }
-for k,v in defaults.items():
+for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
@@ -59,14 +58,13 @@ def verify_credentials(uid, pwd):
         return False, "Usuário não encontrado."
     if not user.get("active", True):
         return False, "Conta inativa."
-    # optional expiry check
     exp = user.get("expires")
     if exp:
         try:
             exp_dt = datetime.fromisoformat(exp)
             if datetime.utcnow() > exp_dt:
                 return False, "Acesso expirado."
-        except Exception:
+        except:
             pass
     if user.get("password") != pwd:
         return False, "Senha incorreta."
@@ -82,19 +80,17 @@ if st.session_state.stage == "login":
         if not ok:
             st.error(msg)
         else:
-            st.success("Login OK.")
             st.session_state.user_id = uid
-            # get user's phone (enforce fixed number)
             user = users_db.get(uid)
             st.session_state.authorized_phone = user.get("phone")
             st.session_state.stage = "phone"
-            st.experimental_rerun()
+            st.rerun()
 
-# ---------------- UI: Phone stage (uses fixed phone from user DB) ----------------
+# ---------------- UI: Phone stage ----------------
 if st.session_state.stage == "phone":
     st.subheader("1️⃣ Confirme seu telefone cadastrado")
     authorized = st.session_state.authorized_phone
-    st.text(f"Número autorizado: {authorized} (não editável)")
+    st.text(f"Número autorizado: {authorized}")
 
     if st.button("Enviar código SMS para o número cadastrado"):
         async def do_send():
@@ -103,32 +99,33 @@ if st.session_state.stage == "phone":
             res = loop.run_until_complete(do_send())
             st.session_state.phone_hash = res.phone_code_hash
             st.session_state.stage = "code"
-            st.success("Código enviado! Verifique o Telegram do número autorizado.")
-            st.experimental_rerun()
+            st.success("Código enviado! Verifique o Telegram.")
+            st.rerun()
         except Exception as e:
             st.error(f"Erro ao enviar código: {e}")
 
 # ---------------- UI: Code stage ----------------
 if st.session_state.stage == "code":
-    st.subheader("2️⃣ Digite o código recebido no Telegram")
+    st.subheader("2️⃣ Digite o código recebido")
 
     code = st.text_input("Código (ex: 12345)")
     if st.button("Confirmar código"):
         async def do_sign():
-            return await client.sign_in(st.session_state.authorized_phone, code, phone_code_hash=st.session_state.phone_hash)
+            return await client.sign_in(
+                st.session_state.authorized_phone, 
+                code, 
+                phone_code_hash=st.session_state.phone_hash
+            )
         try:
             loop.run_until_complete(do_sign())
-            st.success("Código confirmado — logado.")
             st.session_state.stage = "logged"
-            st.experimental_rerun()
+            st.rerun()
         except Exception as e:
-            txt = str(e).lower()
-            if "password" in txt or "2fa" in txt:
+            if "password" in str(e).lower():
                 st.session_state.stage = "need_2fa"
-                st.warning("Conta com 2FA: digite a senha.")
-                st.experimental_rerun()
+                st.rerun()
             else:
-                st.error(f"Erro ao validar código: {e}")
+                st.error(f"Erro: {e}")
 
 # ---------------- UI: 2FA ----------------
 if st.session_state.stage == "need_2fa":
@@ -139,18 +136,17 @@ if st.session_state.stage == "need_2fa":
             return await client.sign_in(password=pwd2)
         try:
             loop.run_until_complete(do_pass())
-            st.success("2FA confirmada — logado.")
             st.session_state.stage = "logged"
-            st.experimental_rerun()
+            st.rerun()
         except Exception as e:
             st.error(f"Erro 2FA: {e}")
 
 # ---------------- UI: LOGGED ----------------
 if st.session_state.stage == "logged":
     st.success("✅ Acesso autorizado.")
-    st.subheader("Escolha o grupo/canal (apenas grupos e canais)")
 
-    # load groups once
+    st.subheader("Selecione o grupo/canal")
+
     if st.session_state.get("groups") is None:
         async def load_groups():
             dialogs = await client.get_dialogs()
@@ -167,70 +163,58 @@ if st.session_state.stage == "logged":
             st.error(f"Erro ao carregar grupos: {e}")
             st.session_state.groups = []
 
-    # build selectbox options
     options = [f"{title} (ID: {gid})" for gid, title, _ in st.session_state.groups]
+
     if options:
-        sel = st.selectbox("Selecione o grupo/canal:", options)
+        sel = st.selectbox("Escolha:", options)
         idx = options.index(sel)
-        gid, title, dialog_obj = st.session_state.groups[idx][0], st.session_state.groups[idx][1], st.session_state.groups[idx][2]
-        # show preview image (try download)
-        preview_col, info_col = st.columns([1,3])
+        gid, title, dialog_obj = st.session_state.groups[idx]
+
+        preview_col, info_col = st.columns([1, 3])
         with preview_col:
-            # try downloading profile photo to bytes
             try:
                 bio = io.BytesIO()
-                # Telethon: download_profile_photo(entity, file=bio)
                 loop.run_until_complete(client.download_profile_photo(dialog_obj.entity, file=bio))
                 bio.seek(0)
                 st.image(bio.read(), caption=title, use_column_width=True)
-            except Exception:
+            except:
                 st.write("🖼️ (sem foto)")
 
         with info_col:
             st.markdown(f"**{title}**")
             st.markdown(f"ID: `{gid}`")
-            st.markdown("---")
 
-        # message input
-        msg = st.text_area("Mensagem a enviar (não inclua ping):", height=120)
+        msg = st.text_area("Mensagem:", height=120)
 
-        # attempts display fixed (overwrite)
-        if "attempts" not in st.session_state:
-            st.session_state.attempts = 0
-        attempts_placeholder = st.empty()
-        ping_placeholder = st.empty()
-        status_placeholder = st.empty()
+        attempts_pl = st.empty()
+        ping_pl = st.empty()
+        status_pl = st.empty()
 
-        # initialize attempts display
-        attempts_placeholder.info(f"Tentativas: {st.session_state.attempts}")
+        attempts_pl.info(f"Tentativas: {st.session_state.attempts}")
 
         if st.button("🚀 ENVIAR EM LOOP ATÉ ABRIR"):
             if not msg:
-                st.error("Digite a mensagem primeiro.")
+                st.error("Digite a mensagem.")
             else:
                 async def flood_run():
                     st.session_state.attempts = 0
-                    attempts_placeholder.info(f"Tentativas: {st.session_state.attempts}")
+                    attempts_pl.info(f"Tentativas: {st.session_state.attempts}")
                     while True:
                         try:
                             st.session_state.attempts += 1
-                            attempts_placeholder.info(f"Tentativas: {st.session_state.attempts}")
+                            attempts_pl.info(f"Tentativas: {st.session_state.attempts}")
                             t0 = time.perf_counter()
                             await client.send_message(int(gid), msg)
-                            ping_ms = (time.perf_counter() - t0) * 1000
-                            # return ping
-                            return ping_ms
-                        except Exception:
-                            # update UI and wait
-                            status_placeholder.warning("Grupo fechado. Tentando novamente...")
+                            return (time.perf_counter() - t0) * 1000
+                        except:
+                            status_pl.warning("Grupo fechado. Tentando...")
                             await asyncio.sleep(0.03)
 
                 try:
                     ping = loop.run_until_complete(flood_run())
-                    status_placeholder.success("✅ Mensagem enviada com sucesso!")
-                    ping_placeholder.info(f"⏱️ Ping (última entrega): {ping:.2f} ms")
+                    status_pl.success("Mensagem enviada!")
+                    ping_pl.info(f"⏱️ Ping: {ping:.2f} ms")
                 except Exception as e:
-                    status_placeholder.error(f"Erro durante envio: {e}")
+                    status_pl.error(f"Erro: {e}")
     else:
-        st.info("Nenhum grupo/canal encontrado.")
-
+        st.info("Nenhum grupo encontrado.")
