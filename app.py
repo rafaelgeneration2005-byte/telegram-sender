@@ -234,6 +234,3 @@ if st.session_state.stage == "logged":
     else:
         st.info("Nenhum grupo/canal encontrado.")
 
-# ---------------- Admin note: not included UI for adding users ----------------
-st.markdown("---")
-st.caption("Administradores: gerencie usuários editando users.json no repositório (recomendo repositório privado).")
