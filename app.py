@@ -9,7 +9,7 @@ api_hash = "cf912432fa5bc84e7360944567697b08"
 st.set_page_config(page_title="Telegram Sender", layout="centered")
 
 # ------------------------------------------
-#  CONFIGURAÇÃO DO LOOP DO TELETHON
+# EVENT LOOP
 # ------------------------------------------
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
@@ -21,20 +21,19 @@ async def ensure_connected():
         await client.connect()
 
 # ------------------------------------------
-#     INICIALIZAÇÃO DAS VARIÁVEIS
+# SESSION STATE
 # ------------------------------------------
-if "phone_hash" not in st.session_state:
-    st.session_state.phone_hash = None
-if "phone_number" not in st.session_state:
-    st.session_state.phone_number = None
+for key in ["phone", "phone_hash", "need_2fa"]:
+    if key not in st.session_state:
+        st.session_state[key] = None
 
 # ------------------------------------------
-#     INTERFACE STREAMLIT
+# UI
 # ------------------------------------------
-st.title("🔥 Telegram Auto Sender")
+st.title("🔥 Telegram Auto Sender - Competição")
 
-# 1 — Número
-phone = st.text_input("📱 Digite seu número (+55...)", value=st.session_state.phone_number or "")
+# 1 — NÚMERO
+phone = st.text_input("📱 Digite seu número (+55...)", value=st.session_state.phone or "")
 
 if st.button("Enviar código SMS"):
     async def send_code():
@@ -43,36 +42,59 @@ if st.button("Enviar código SMS"):
         return result.phone_code_hash
 
     try:
-        phone_code_hash = loop.run_until_complete(send_code())
-        st.session_state.phone_hash = phone_code_hash
-        st.session_state.phone_number = phone
-        st.success("Código enviado com sucesso!")
+        h = loop.run_until_complete(send_code())
+        st.session_state.phone = phone
+        st.session_state.phone_hash = h
+        st.success("SMS enviado! Digite o código abaixo.")
     except Exception as e:
         st.error(f"Erro: {e}")
 
-# 2 — Código
-code = st.text_input("🔐 Código recebido")
+# 2 — CÓDIGO
+code = st.text_input("🔐 Código do Telegram (ex: 12345)")
 
 if st.button("Confirmar código"):
     async def verify():
         await ensure_connected()
         return await client.sign_in(
-            st.session_state.phone_number,
+            st.session_state.phone,
             code,
             phone_code_hash=st.session_state.phone_hash
         )
 
     try:
         loop.run_until_complete(verify())
-        st.success("Login efetuado!")
+        st.success("Login feito com sucesso!")
+        st.session_state.need_2fa = False
+
     except Exception as e:
-        st.error(f"Erro: {e}")
+        if "password" in str(e).lower():
+            st.session_state.need_2fa = True
+            st.warning("Sua conta tem senha 2FA. Digite abaixo.")
+        else:
+            st.error(f"Erro: {e}")
 
-# 3 — Enviar mensagem
-chat_id = st.text_input("💬 ID do grupo (ex: -10012345678)")
-msg = st.text_input("💬 Mensagem para enviar")
+# 3 — SENHA 2FA (se necessário)
+if st.session_state.need_2fa:
+    password = st.text_input("🔑 Senha 2FA", type="password")
 
-if st.button("🚀 Mandar mensagem no modo competição"):
+    if st.button("Confirmar senha 2FA"):
+        async def verify_2fa():
+            await ensure_connected()
+            return await client.sign_in(password=password)
+
+        try:
+            loop.run_until_complete(verify_2fa())
+            st.success("Login realizado com sucesso!")
+            st.session_state.need_2fa = False
+        except Exception as e:
+            st.error(f"Senha incorreta: {e}")
+
+
+# 4 — CAMPOS DA COMPETIÇÃO
+chat_id = st.text_input("💬 ID do grupo (ex: -100xxxx)")
+msg = st.text_input("📨 Mensagem da competição")
+
+if st.button("🚀 ENVIAR EM LOOP ATÉ ABRIR"):
     async def flood():
         await ensure_connected()
 
