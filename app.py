@@ -88,4 +88,100 @@ if st.session_state.stage == "code":
 
         except Exception as e:
             if "password" in str(e).lower():
-                st.session_s_
+                st.session_state.stage = "need_2fa"
+                st.rerun()
+
+            st.error(f"Erro: {e}")
+
+
+# ---------- 3) 2FA ----------
+if st.session_state.stage == "need_2fa":
+    st.subheader("🔐 Senha 2FA necessária")
+    pwd = st.text_input("Senha", type="password")
+
+    if st.button("Entrar"):
+        async def do():
+            return await client.sign_in(password=pwd)
+
+        try:
+            loop.run_until_complete(do())
+            st.session_state.stage = "logged"
+            st.rerun()
+        except Exception as e:
+            st.error(f"Erro 2FA: {e}")
+
+
+# ---------- 4) LOGADO ----------
+if st.session_state.stage == "logged":
+    st.success("Login realizado com sucesso! ✅")
+
+    st.subheader("📂 Escolha o grupo ou canal")
+
+    # Carregar grupos uma única vez
+    if st.session_state.groups is None:
+
+        async def load():
+            dialogs = await client.get_dialogs()
+            arr = []
+            for d in dialogs:
+                if d.is_group or d.is_channel:
+                    title = getattr(d.entity, "title", "Sem nome")
+                    arr.append((d.entity.id, title))
+            return arr
+
+        st.session_state.groups = loop.run_until_complete(load())
+
+    names = [f"{title} (ID: {gid})" for gid, title in st.session_state.groups]
+    sel = st.selectbox("Selecione o grupo", names)
+
+    idx = names.index(sel)
+    gid = st.session_state.groups[idx][0]
+
+    msg = st.text_area("✉ Mensagem para enviar:")
+
+    # LOGS PERSISTENTES
+    if "attempts_log" not in st.session_state:
+        st.session_state.attempts_log = ""
+
+    attempts_box = st.container()
+    ping_box = st.empty()
+    status = st.empty()
+
+    attempts_box.write(st.session_state.attempts_log)
+
+    if st.button("🚀 ENVIAR EM LOOP ATÉ ABRIR"):
+
+        async def flood():
+            tentativas = 0
+
+            while True:
+                try:
+                    tentativas += 1
+
+                    st.session_state.attempts_log = (
+                        f"🔄 Tentativas: {tentativas}"
+                    )
+                    attempts_box.write(st.session_state.attempts_log)
+
+                    t0 = time.perf_counter()
+                    await client.send_message(gid, msg)
+                    ping = (time.perf_counter() - t0) * 1000
+
+                    return tentativas, ping
+
+                except:
+                    await asyncio.sleep(0.05)
+
+        try:
+            tentativas, ping = loop.run_until_complete(flood())
+
+            status.success("🎉 Mensagem enviada com sucesso!")
+
+            ping_box.info(
+                f"📊 **Estatísticas da entrega:**\n"
+                f"- Tentativas: **{tentativas}**\n"
+                f"- Ping: **{ping:.2f} ms**"
+            )
+
+        except Exception as e:
+            status.error(f"Erro: {e}")
