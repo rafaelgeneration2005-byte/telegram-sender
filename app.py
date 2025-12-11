@@ -48,7 +48,7 @@ st.title("🚀 Telegram Sender — Competição")
 if st.session_state.stage == "phone":
     st.subheader("1️⃣ Digite seu número Telegram")
 
-    number = st.text_input("Número completo (+55DDD...)")
+    number = st.text_input("Número completo (55DDD...)")
 
     if st.button("Enviar código SMS"):
         if not number:
@@ -157,3 +157,4 @@ if st.session_state.stage == "logged":
             status.success("Mensagem enviada!")
         except Exception as e:
             status.error(f"Erro: {e}")
+
